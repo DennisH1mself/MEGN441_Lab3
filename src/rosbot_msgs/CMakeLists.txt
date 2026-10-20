@@ -15,8 +15,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/Blank.msg"
-  # TODO
+  "msg/JointControl.msg"
+  "msg/IKTarget.msg"
+  "srv/GetJointAngle.srv"
 )
 
 if(BUILD_TESTING)

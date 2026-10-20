@@ -1,0 +1,4 @@
+ssh ubuntu@192.168.55.1
+cd ~/b1l3_ws
+source install/setup.zsh
+ros2 run rosbot_arm arm_control

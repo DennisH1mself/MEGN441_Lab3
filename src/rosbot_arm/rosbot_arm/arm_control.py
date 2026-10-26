@@ -41,10 +41,6 @@ class ArmControl(Node):
         targets.append((10, msg.gripper))
         duration = 1.0 # Time to complete motion
         self.board.bus_servo_set_position(duration, targets)
-    # TODO: Write an arm_control node to receive joint angles
-    # and send messages to the Board.
-
-    # See arm_test for example of board functionality.
 
 def atp(angle):
     return round((angle + 120) * 1000 / 240)

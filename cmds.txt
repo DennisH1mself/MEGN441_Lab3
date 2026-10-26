@@ -2,3 +2,4 @@ ssh ubuntu@192.168.55.1
 cd ~/b1l3_ws
 source install/setup.zsh
 ros2 run rosbot_arm arm_control
+rsync -avz ./src ubuntu@192.168.55.1:~/b1l3_ws/ && ssh ubuntu@192.168.55.1 'bash -c "source /opt/ros/humble/setup.bash && source ~/third_party/orbbec_ws/install/local_setup.bash && cd ~/b1l3_ws && colcon build --symlink-install --packages-select rosbot_msgs rosbot_arm block_detector --packages-ignore orbbec_camera orbbec_camera_msgs orbbec_description"'

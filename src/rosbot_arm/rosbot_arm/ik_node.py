@@ -2,7 +2,6 @@ import rclpy
 from rclpy.node import Node
 from rosbot_msgs.msg import IKTarget, JointControl
 import numpy as np
-from arm_test import atp, pta
 
 ##  Joint Links ##
 # l0 refers to the height of the arm base wrt base_link
@@ -12,25 +11,11 @@ l2 = 0.130
 l3 = 0.055
 tool_link = 0.117
 
-lengths = [l0, l1, l2, l3+tool_link, 0]
-
-
-arm_ids = [1, 2, 3, 4, 5]
-
-# Only joint 2 is limited to protect the screen
-min_pulses = [0, 125, 0, 0, 0]
-max_pulses = [1000, 775, 1000, 1000, 1000]
+# Servo-angle limits for IDs 1 through 5; shoulder protects the screen.
 min_angles = [-120, -90, -120, -120, -120]
 max_angles = [120, 66, 120, 120, 120]
 
 
-
-# All joints operate in the range -120 to 120 with a pulse width range of 0 to 1000
-
-# TODO: Write helper scripts to convert from one to the other.
-
-
-    
 class IKNode(Node):
     def __init__(self):
         super().__init__('ik_node')
@@ -41,30 +26,64 @@ class IKNode(Node):
             JointControl, '/joint_control', 10
         )
     def ik_callback(self, msg):
-        x = msg.x
-        y = msg.y
-        z = msg.z
-        roll = msg.roll
-        pitch = msg.pitch
-        gripper = msg.gripper
+        try:
+            if not 0 <= msg.gripper < 650:
+                raise ValueError('Gripper pulse must be between 0 and 649.')
+            angles = self.inverse_kinematics(
+                msg.x, msg.y, msg.z, msg.roll, msg.pitch
+            )
+        except ValueError as error:
+            self.get_logger().warn(str(error))
+            return
+
         response = JointControl()
-        response.rotation, response.joint1, response.joint2, response.joint3, response.wrist = self.inverse_kinematics(x, y, z, roll, pitch)
-        response.gripper = gripper
+        response.rotation, response.joint1, response.joint2, response.joint3, response.wrist = [
+            int(round(angle)) for angle in angles
+        ]
+        response.gripper = msg.gripper
         self.publisher.publish(response)
+
     def inverse_kinematics(self, x, y, z, roll, pitch):
-        rotation = np.rad2deg(np.arctan2(self.y, self.x))
-        # vector 3
-        v3z = z - (l3 + tool_link) * np.sin(np.deg2rad(pitch))
-        v3rxy = np.sqrt(x**2 + y**2) - (l3 + tool_link) * np.cos(np.deg2rad(pitch))
-        v3x = v3rxy * np.cos(np.deg2rad(rotation))
-        v3y = v3rxy * np.sin(np.deg2rad(rotation))
-        v3 = np.array([v3x, v3y, v3z])
-        theta_2 = 180 - np.rad2deg(np.arccos((l1**2 + l2**2 - np.linalg.norm(v3)**2) / (2 * l1 * l2)))
-        theta_1 = np.rad2deg(np.arctan2(v3[3], np.sqrt(v3[0]**2 + v3[1]**2)) - np.arccos((l1**2 + np.linalg.norm(v3)**2 - l2**2) / (2 * l1 * np.linalg.norm(v3))))
-        v2 = np.array([l1 * np.cos(np.deg2rad(theta_1)) * np.cos(np.deg2rad(rotation)), l1 * np.cos(np.deg2rad(theta_1)) * np.sin(np.deg2rad(rotation)), l1 * np.sin(np.deg2rad(theta_1))])
-        v23 = v3 - v2
-        theta_3 = np.rad2deg(np.arctan2(v23[2], np.sqrt(v23[0]**2 + v23[1]**2))) - pitch
-        
+        if not np.all(np.isfinite([x, y, z, roll, pitch])):
+            raise ValueError('IK target must contain finite numbers.')
+
+        radius = np.hypot(x, y)
+        if radius < 1e-9:
+            raise ValueError('Target is on the base axis; rotation is undefined.')
+        rotation = np.rad2deg(np.arctan2(y, x))
+
+        # Wrist center relative to the fixed shoulder; keep radial sign.
+        wrist_r = radius - (l3 + tool_link) * np.cos(np.deg2rad(pitch))
+        wrist_z = z - l0 - (l3 + tool_link) * np.sin(np.deg2rad(pitch))
+        distance = np.hypot(wrist_r, wrist_z)
+        if distance < 1e-9:
+            raise ValueError('Wrist center is at the shoulder; IK is singular.')
+        if distance > l1 + l2 + 1e-9 or distance < abs(l1 - l2) - 1e-9:
+            raise ValueError('Target is outside the arm reach.')
+
+        cosine = (distance**2 - l1**2 - l2**2) / (2 * l1 * l2)
+        elbow = np.arccos(np.clip(cosine, -1.0, 1.0))
+
+        # Try both elbow bends and use the first one within servo limits.
+        for theta_2 in (elbow, -elbow):
+            theta_1 = np.arctan2(wrist_z, wrist_r) - np.arctan2(
+                l2 * np.sin(theta_2), l1 + l2 * np.cos(theta_2)
+            )
+            theta_3 = pitch - np.rad2deg(theta_1 + theta_2)
+            # Pulse 500 is upright: geometric shoulder 90 degrees, others 0.
+            # Directions checked against the robot's factory servo controller
+            # and jetrover_description/urdf/arm.urdf.xacro (+y pitch axes).
+            servo_angles = np.array([
+                rotation, np.rad2deg(theta_1) - 90.0,
+                np.rad2deg(theta_2), theta_3, roll
+            ])
+            servo_angles = (servo_angles + 180.0) % 360.0 - 180.0
+            if np.all(servo_angles >= np.array(min_angles) - 1e-9) and np.all(
+                servo_angles <= np.array(max_angles) + 1e-9
+            ):
+                return servo_angles
+
+        raise ValueError('Neither elbow bend fits the calibrated servo joint limits.')
 def main():
     rclpy.init()
     ik_node = IKNode()

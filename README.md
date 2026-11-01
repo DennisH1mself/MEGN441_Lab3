@@ -22,52 +22,11 @@ By the end of this lab, you'll be able to:
 2. **Write your own ROS2 messages and service**: Next, come up with a plan as a team for how you'd like to send messages about the arm between the `arm_control` and `IK_node` nodes: its forward positions, gripper control, and target positions for inverse kinematics. You'll choose your own topic names and write your own message types for these. Message types are surprisingly straightforward to write. Use [this tutorial](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Custom-ROS2-Interfaces.html) to help you get started. You can use the `rosbot_msgs` template, but you will need to update the `CMakeLists.txt` file with your own message types. Also, create a service type for the robot for the service described in the next step.
 3. **Write the backend arm_control node**: Write a node that takes your custom forward command ROS messages and sends those commands to the arm. This node should also include a service, as described in [this tutorial](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Writing-A-Simple-Py-Service-And-Client.html), to send current angle information from the board. To test this `arm_control` node, you can use the `arm_test` forward mode, although you will need to do a bit of work to configure the publisher to your message type.
 4. **Write the inverse kinematics node**: Work out the inverse kinematics of your arm, given its end-effector xyz location and local roll/pitch. For our pick and place goals, the local pitch angle is -90 degrees, while the roll angle will be whatever it needs to be to grasp the block. Test your inverse kinematics node on some example configurations to be sure that it works as expected. Test whether your inverse kinematics returns realistic angles and send a warning if the request is not okay. You can send a warning message type with `get_logger().warn('message')`. The logger has five priority levels (of increasing severity): `debug`, `info`, `warn`, `error`, and `fatal`.
-5. **Use the provided block detector**: The professor's [block_detector package](https://github.com/gknave/megn441/tree/lab3/lab3_ws/src/block_detector) is included in `src/block_detector`. Its `BlockDetection.msg` is included in `rosbot_msgs` and registered in `CMakeLists.txt`. The detector publishes one `rosbot_msgs/msg/BlockDetection` per detected block on `/block_detector/block_detections`, containing `header`, `color`, and `position` (x, y, z in meters). The position is in the camera frame named by `header.frame_id`. Your sequencer must transform it to `base_footprint` before sending an IK target.
-
-   **Build on the robot**, from this workspace (using zsh):
-
-   ```zsh
-   cd ~/b1l3_ws
-   source /opt/ros/humble/setup.zsh
-   sudo apt update
-   sudo apt install python3-opencv python3-numpy ros-humble-cv-bridge ros-humble-message-filters ros-humble-rqt-image-view
-   colcon build --symlink-install --packages-select rosbot_msgs rosbot_arm block_detector
-   source install/setup.zsh
-   ```
-
-   **Run with the robot's desktop/display available**:
-
-   ```zsh
-   ros2 launch block_detector detector_launch.py
-   ```
-
-   This starts the camera as `depth_cam` with depth registration enabled, the detector, and an image viewer. Select `/block_detector/debug_image` in the viewer. Run only one camera driver; stop any existing camera launch before using this combined launch.
-
-   **Over SSH without a display**, start the camera in one terminal and the detector in another. Source `~/b1l3_ws/install/setup.zsh` in each terminal first:
-
-   ```zsh
-   # Terminal 1 (skip if this registered camera is already running)
-   ros2 launch orbbec_camera dabai_dcw.launch.py camera_name:=depth_cam depth_registration:=true align_mode:=HW
-   ```
-
-   ```zsh
-   # Terminal 2
-   ros2 run block_detector block_detector
-   ```
-
-   To see detections in another sourced terminal:
-
-   ```zsh
-   ros2 topic echo /block_detector/block_detections
-   ```
-
-   The detector needs `/depth_cam/color/image_raw`, `/depth_cam/depth/image_raw`, and `/depth_cam/color/camera_info`; depth must be aligned to color. The sample bag/image paths in the package's original README are examples from its author's computer, not files included here. Detection can be tested when the robot is available.
-
-   Imported from upstream revision [`318e309`](https://github.com/gknave/megn441/commit/318e309d4d058ab79f53852bc780a41dfabbc1a0). The detector code is unchanged; missing dependency declarations were added to its `package.xml`.
+5. **Use opencv to identify blocks using the depth cam**: The `block_detector` package identifies the location of each block and outputs as a `geometry_msgs/msg/Point` within the given `rosbot_msgs/msg/BlockDection` message type, with `(x, y, z)` as the position of the block defined within the `depth_cam` frame. In your sequencer node, you'll need to convert the x, y, z of the block location into the `base_footprint` frame, which is the frame in which your IK node operates. It publishes these detections to the `block_detections` topic. (Make sure to grab the BlockDetection type from [here](https://github.com/gknave/megn441/tree/lab3/lab3_ws/src/rosbot_msgs/msg))
 
 6. **Write a final sequencer node to tell the robot how to stack the blocks**: I recommend putting this node in your `rosbot` or `rosbot_arm` package, but you can of course create a new package if you prefer. You will need to modify your `setup.py` to tell it about your new node. In this node, you'll send requests and messages to the other nodes to identify the block locations, pick them up, and place them in-line with the robot arm base `20 cm` to the right of the robot on the ground. Stack the blocks on top of one-another with red on the bottom, then green, then blue.
 
-   To transform the point into the `base_footprint` frame, you'll need to use a TF2 Buffer. There is [documentation here](https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Listener-Py.html) that is a bit hard to follow. The relevant parts are creating a TF Buffer. A TF Buffer listens to the published transforms. Use `tf_buffer.lookup_transform` with target frame `base_footprint` and source frame `detection.header.frame_id`, then use the function below to build the transformation matrix. Do not assume the source frame is named `depth_cam`; use the frame reported by the detector. Note that using numpy, you can use the `@` for matrix multiplication. I use quaternions below because the rotation outputs in quaternions.
+   To transform the point into the `base_footprint` frame, you'll need to use a TF2 Buffer. There is [documentation here](https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Listener-Py.html) that is a bit hard to follow. The relevant parts are creating a TF Buffer. A TF Buffer listens to the published transforms from the `depth_cam` frame to the `base_footprint` frame. I recommend using `tf_buffer.lookup_transform` method and the function below to build the transformation matrix. Note that using numpy, you can use the `@` for matrix multiplication. I use quaternions below because the rotation outputs in quaternions.
 
    ```python
    def quat_to_T(q, t):

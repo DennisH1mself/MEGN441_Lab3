@@ -15,10 +15,8 @@ class Sequencer(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.ik_pub = self.create_publisher(IKTarget, '/ik_target', 10)
-        self.subscriber = self.create_subscription(
-            BlockDetection, '/block_detector/block_detections', self.block_callback, 10)
-        self.joint_subscriber = self.create_subscription(
-            JointState, '/controller_manager/joint_states', self.joint_callback, 10)
+        self.subscriber = self.create_subscription(BlockDetection, '/block_detector/block_detections', self.block_callback, 10)
+        self.joint_subscriber = self.create_subscription(JointState, '/controller_manager/joint_states', self.joint_callback, 10)
 
         self.detection = None
         self.joint_time = None

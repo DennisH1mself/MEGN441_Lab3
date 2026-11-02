@@ -19,43 +19,28 @@ max_angles = [120, 66, 120, 120, 120]
 def inverse_kinematics(x, y, z, roll, pitch):
     if not np.all(np.isfinite([x, y, z, roll, pitch])):
         raise ValueError('IK target must contain finite numbers.')
-
     radius = np.hypot(x, y)
     if radius < 1e-9:
         raise ValueError('Target is on the base axis; rotation is undefined.')
     rotation = np.rad2deg(np.arctan2(y, x))
-
-    # Wrist center relative to the fixed shoulder; keep radial sign.
-    wrist_r = radius - (l3 + tool_link) * np.cos(np.deg2rad(pitch))
-    wrist_z = z - l0 - (l3 + tool_link) * np.sin(np.deg2rad(pitch))
-    distance = np.hypot(wrist_r, wrist_z)
+    # Wrist center relative to the shoulder; preserve the radial sign.
+    v3z = z - l0 - (l3 + tool_link) * np.sin(np.deg2rad(pitch))
+    v3rxy = radius - (l3 + tool_link) * np.cos(np.deg2rad(pitch))
+    distance = np.hypot(v3rxy, v3z)
     if distance < 1e-9:
         raise ValueError('Wrist center is at the shoulder; IK is singular.')
     if distance > l1 + l2 + 1e-9 or distance < abs(l1 - l2) - 1e-9:
         raise ValueError('Target is outside the arm reach.')
 
-    cosine = (distance**2 - l1**2 - l2**2) / (2 * l1 * l2)
-    elbow = np.arccos(np.clip(cosine, -1.0, 1.0))
-
-    # Try both elbow bends and use the first one within servo limits.
+    elbow = np.arccos(np.clip((distance**2 - l1**2 - l2**2) / (2 * l1 * l2), -1.0, 1.0))
+    # Try both elbow bends; servo shoulder zero is upright (90 degrees).
     for theta_2 in (elbow, -elbow):
-        theta_1 = np.arctan2(wrist_z, wrist_r) - np.arctan2(
-            l2 * np.sin(theta_2), l1 + l2 * np.cos(theta_2)
-        )
+        theta_1 = np.arctan2(v3z, v3rxy) - np.arctan2(l2 * np.sin(theta_2), l1 + l2 * np.cos(theta_2))
         theta_3 = pitch - np.rad2deg(theta_1 + theta_2)
-        # Pulse 500 is upright: geometric shoulder 90 degrees, others 0.
-        # Directions checked against the robot's factory servo controller
-        # and jetrover_description/urdf/arm.urdf.xacro (+y pitch axes).
-        servo_angles = np.array([
-            rotation, np.rad2deg(theta_1) - 90.0,
-            np.rad2deg(theta_2), theta_3, roll
-        ])
-        servo_angles = (servo_angles + 180.0) % 360.0 - 180.0
-        if np.all(servo_angles >= np.array(min_angles) - 1e-9) and np.all(
-            servo_angles <= np.array(max_angles) + 1e-9
-        ):
-            return servo_angles
-
+        angles = np.array([rotation, np.rad2deg(theta_1) - 90.0, np.rad2deg(theta_2), theta_3, roll])
+        angles = (angles + 180.0) % 360.0 - 180.0
+        if np.all((angles >= np.array(min_angles) - 1e-9) & (angles <= np.array(max_angles) + 1e-9)):
+            return angles
     raise ValueError('Neither elbow bend fits the calibrated servo joint limits.')
 
 
